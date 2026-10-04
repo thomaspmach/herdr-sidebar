@@ -73,7 +73,7 @@ working panes back manually. Third-party TUIs are not yet verified with takeover
 - Toggle changed files between list and folder tree with `t`, the view button, or Settings.
   In tree view, use `←→` to fold folders and `m` to stage or unstage a folder.
 - Use one commit box per repository in multi-repo folders.
-- Draft a commit message with the ✧ button through the local `claude` CLI, with a
+- Draft a commit message with the ✧ button through the local `claude` or `codex` CLI, with a
   filename-based fallback when Claude is unavailable.
 - Browse commits, file history, branches, worktrees, remotes, stashes, and tags.
 - Keep branch and sync controls visible in every sidebar view with the compact Git footer;
@@ -168,8 +168,49 @@ Use the `-windows` suffix for each direct action on Windows.
 
 All docking, metadata, pane creation, and preview control use herdr's socket API directly.
 The plugin is one Rust crate; optional external tools only enhance Markdown (`glow`), video
-posters (`ffmpeg`), and AI commit drafts (`claude`).
+posters (`ffmpeg`), and AI commit drafts (`claude` or `codex`).
 
 <div align="center">
 <sub>Screenshots: herdr on Windows Terminal with a Nerd Font.</sub>
 </div>
+
+## Commit AI configuration
+
+Commit drafts default to Claude CLI with the `haiku` model. To use Codex, create
+`commit-ai.json` in `HERDR_PLUGIN_STATE_DIR` (normally
+`~/.local/state/herdr/plugins/herdr-sidebar` on macOS/Linux, or
+`%LOCALAPPDATA%\herdr\plugins\herdr-sidebar` on Windows):
+
+```json
+{
+  "cli": "codex",
+  "model": "gpt-6-luna",
+  "reasoning_effort": "medium"
+}
+```
+
+The file is read for every suggestion, so changing it needs no restart. Supported CLI
+values are `claude` and `codex`; omitting the file preserves Claude/Haiku. Codex defaults
+to `gpt-6-luna` and `medium` when the optional model/effort fields are absent. The chosen
+CLI must be installed on PATH and authenticated. Codex runs ephemeral, read-only, without
+user configuration or project instructions; shell tools are disabled. It receives only
+the pending diff (capped at 16 KiB) as task input. Only a completed agent message from a
+successful Codex turn becomes a draft. No commit is made by the AI subprocess.
+
+Missing CLI, authentication/model failures, malformed configuration, or a 60-second timeout
+use the existing filename-based fallback. Diagnostic stderr excludes diff/message content.
+
+### Maintaining a local fork
+
+Build and register from `plugins/herdr-sidebar` with `cargo build --release` and
+`herdr plugin link . --enabled`. Use the `refresh-sidebars` action to reload running
+sidebars while preserving preview/editor panes and saving commit drafts.
+Local links do not offer the official automatic update action. This fork builds from source
+with Rust: its manifest does not download original release binaries that lack the modification.
+
+Keep your change on a branch, with `upstream` pointing to the original repository.
+To bring in updates, run `git fetch upstream`, then `git merge upstream/main` on your
+branch, resolve any conflicts, run `cargo test` and `cargo clippy -- -D warnings`, rebuild,
+and refresh. These commands update your fork; installing the official plugin replaces
+the local registration. To revert to the original registered version, link its original
+plugin directory and refresh again.

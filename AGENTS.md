@@ -1348,3 +1348,12 @@ First clean install of both plugins on a Mac (driven over SSH), findings:
 shell tab, git tab with lazygit). The Coordinator session delegates feature work to sibling
 panes. Create feature worktrees only when explicitly requested; the old repository-local
 feature-worktree skill has been retired.
+
+## Configurable commit AI
+
+`src/suggest.rs` reads `commit-ai.json` from `state::state_dir()` on each suggestion.
+This is the durable plugin **state** directory, distinct from `herdr plugin config-dir`.
+Claude/Haiku remains the default; Codex uses isolated ephemeral read-only execution and
+parses JSONL `item.completed` agent messages only after `turn.completed`. Drain stdout
+concurrently because event streams can exceed pipe capacity. Use `refresh-sidebars`,
+not the legacy hard-closing redeploy script, to preserve unsaved commit drafts.
