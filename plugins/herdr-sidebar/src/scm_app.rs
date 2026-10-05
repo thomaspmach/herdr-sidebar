@@ -1256,15 +1256,6 @@ impl App {
         false
     }
 
-    fn pane_is_focused(&self) -> bool {
-        let Some(pane_id) = self.pane_ctl.as_ref().map(|ctl| ctl.pane_id.as_str()) else {
-            return true;
-        };
-        herdr_sidebar::ipc::call_text("pane.list", serde_json::json!({}))
-            .ok()
-            .is_some_and(|json| pane_focused_in(&json, pane_id))
-    }
-
     fn follow_sibling_cwd(&mut self) {
         if !self.sidebar_state.follow_cwd
             || self.overlay.is_some()
@@ -1351,9 +1342,6 @@ impl App {
                     self.syncing = None;
                 }
             }
-        }
-        if !self.pane_is_focused() {
-            return;
         }
         if self.repos.is_empty() {
             self.repos = Git::discover_all(&self.cwd)
@@ -5445,26 +5433,6 @@ fn tree_dir_item(
     ListItem::new(Line::from(spans))
 }
 
-fn pane_focused_in(pane_list_json: &str, pane_id: &str) -> bool {
-    let Ok(value) =
-        serde_json::from_str::<serde_json::Value>(pane_list_json.trim_start_matches('\u{feff}'))
-    else {
-        return false;
-    };
-    value
-        .get("result")
-        .and_then(|result| result.get("panes"))
-        .and_then(|panes| panes.as_array())
-        .and_then(|panes| {
-            panes
-                .iter()
-                .find(|pane| pane.get("pane_id").and_then(|id| id.as_str()) == Some(pane_id))
-        })
-        .and_then(|pane| pane.get("focused"))
-        .and_then(|focused| focused.as_bool())
-        .unwrap_or(false)
-}
-
 fn no_repo_layout(area: Rect, merged: bool) -> [Rect; 2] {
     Layout::vertical([
         Constraint::Length(if merged { 3 } else { 0 }),
@@ -5476,6 +5444,56 @@ fn no_repo_layout(area: Rect, merged: bool) -> [Rect; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unfocused_tick_picks_up_external_changes_and_preserves_commit_draft() {
+        struct TestRepo(PathBuf);
+        impl Drop for TestRepo {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TestRepo(std::env::temp_dir().join(format!(
+            "herdr-unfocused-refresh-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        )));
+        std::fs::create_dir_all(&root.0).unwrap();
+        let git = |args: &[&str]| {
+            let result = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&root.0)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        let follower = std::rc::Rc::new(std::cell::RefCell::new(
+            herdr_sidebar::launch::CwdFollower::default(),
+        ));
+        let mut app = App::new(root.0.clone(), follower);
+        // A nonexistent pane cannot be focused, including when a live Herdr is available.
+        app.pane_ctl = Some(PaneCtl {
+            pane_id: "test:unfocused-sidebar".into(),
+        });
+        let draft: Vec<char> = "Keep my draft".chars().collect();
+        app.repos[0].message = draft.clone();
+        app.repos[0].cursor = 4;
+        std::fs::write(root.0.join("changed.txt"), "external edit").unwrap();
+        app.tick();
+        assert_eq!(app.repos[0].status.unstaged.len(), 1);
+        assert_eq!(app.repos[0].status.unstaged[0].path, "changed.txt");
+        git(&["add", "changed.txt"]);
+        app.tick();
+        assert!(app.repos[0].status.unstaged.is_empty());
+        assert_eq!(app.repos[0].status.staged.len(), 1);
+        assert_eq!(app.repos[0].message, draft);
+        assert_eq!(app.repos[0].cursor, 4);
+    }
 
     #[test]
     fn clean_diverged_repo_uses_sync_as_the_primary_action() {
@@ -5622,16 +5640,6 @@ mod tests {
         let draft = ['d', 'r', 'a', 'f', 't'];
         assert!(!commit_draft_present([empty, empty]));
         assert!(commit_draft_present([empty, draft.as_slice()]));
-    }
-
-    #[test]
-    fn focused_pane_detection_is_scoped_to_our_pane_id() {
-        let panes = r#"{"result":{"panes":[
-            {"pane_id":"w1:p1","focused":false},
-            {"pane_id":"w1:p2","focused":true}
-        ]}}"#;
-        assert!(!pane_focused_in(panes, "w1:p1"));
-        assert!(pane_focused_in(panes, "w1:p2"));
     }
 
     #[test]

@@ -766,9 +766,10 @@ HACKING.md — budget time for that before promising a patched build.
   Local choices use a normal checkout; a remote choice creates its local tracking branch.
   Symbolic `<remote>/HEAD` aliases are omitted. Dirty-worktree checkout failures surface intact
   and never force, stash, discard, or otherwise mutate work to make the switch succeed.
-- Periodic Source Control status/drawer refresh backs off while its pane is unfocused, just
-  like Explorer decorations. Suggestion/sync worker results are still collected first so a
-  hidden pane never strands completed background work.
+- Source Control status/drawer refresh runs every 1.5 seconds even while its pane is
+  unfocused, so external edits and staging changes appear while working in a terminal.
+  Refresh preserves commit drafts and cursor positions. Explorer decorations retain their
+  existing focus-based backoff. Suggestion/sync worker results are collected before refresh.
 - Hotkey hints render as keycap chips (`wrap_hints` takes `(key, label)` pairs, shared in
   `ui.rs`). They live in the ⚙ Settings modal; the FOOTER copy is opt-in via the
   "Footer hotkeys" setting (persisted as `hotkeys` in the state file, default hidden —

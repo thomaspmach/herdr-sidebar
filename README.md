@@ -67,6 +67,8 @@ working panes back manually. Third-party TUIs are not yet verified with takeover
 </div>
 
 - Stage, unstage, discard, commit, inspect diffs, and sync with the upstream.
+- Source Control refreshes external file and staging changes every 1.5 seconds, including
+  while focus stays in a neighbouring terminal; commit-message drafts are preserved.
 - Click the branch name—in the panel header, a repository row, or the Git footer—to
   switch branches, create one with **New branch…**, or track a remote branch.
   Deleting an unmerged branch requires a separate force-delete confirmation.
