@@ -746,7 +746,7 @@ HACKING.md — budget time for that before promising a patched build.
   bordered list row) and ✓ Commit button, and the repo header row shows `⎇branch*` (star =
   dirty) plus clickable ⟳ sync / ✓ commit icons in the fixed last-6 columns. List rows now
   have VARIABLE HEIGHT — mouse hit-testing walks `Row::height()`, and j/k skip the widget
-  rows (`Row::selectable()`). The ✧ suggest / S sync keys act on the ACTIVE repo — the one
+  rows (`Row::selectable()`). The ✧ suggest / Option+S sync keys act on the ACTIVE repo — the one
   the selection is in (named in the panel header).
 - **Git drawers** (title-case names, incl. Worktrees): drawer lines carry parsed
   refs (`DrawerRef` — commit hash / stash index / branch / remote / tag / worktree path,
@@ -1358,3 +1358,9 @@ Claude/Haiku remains the default; Codex uses isolated ephemeral read-only execut
 parses JSONL `item.completed` agent messages only after `turn.completed`. Drain stdout
 concurrently because event streams can exceed pipe capacity. Use `refresh-sidebars`,
 not the legacy hard-closing redeploy script, to preserve unsaved commit drafts.
+
+### Local quick AI commit
+
+`Option+C` is handled only by the focused Sidebar TUI (Explorer switches to SCM). Ghostty must send `Esc+c` (`keybind = alt+c=esc:c`); Cmd+C remains unchanged. `Git::stage_generate_commit` runs on a worker and checks the index tree, branch, and HEAD before committing. SCM blocks further key/mouse Git actions until completion, and applies results by repository root rather than current selection. The existing suggestion fallback remains in use.
+
+`Option+S` replaces `Shift+S` for Sync Changes (`pull --rebase`, then `push`) with the focus in the Source Control list. Ghostty forwards it with `keybind = alt+s=esc:s`. Plain `s` still opens settings; Shift+S types `S` in the message field.

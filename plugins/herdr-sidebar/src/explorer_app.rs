@@ -1030,6 +1030,12 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::ALT {
+            if self.overlay.is_none() {
+                return Some(Exit::QuickCommit);
+            }
+            return None;
+        }
         if key.code == KeyCode::Char('q')
             && key.modifiers.contains(KeyModifiers::CONTROL)
             && !key.modifiers.contains(KeyModifiers::ALT)

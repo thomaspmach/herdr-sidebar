@@ -216,3 +216,11 @@ branch, resolve any conflicts, run `cargo test` and `cargo clippy -- -D warnings
 and refresh. These commands update your fork; installing the official plugin replaces
 the local registration. To revert to the original registered version, link its original
 plugin directory and refresh again.
+
+### Local fork: quick AI commit
+
+With the Sidebar focused, `Option+C` stages all changes in the selected repository, generates a message using the configured commit AI, and commits without pushing. In Explorer it switches to Source Control first. It ignores the shortcut while a dialog is open and prevents overlapping Git actions while running. If the index, branch, or HEAD changes during generation, it stops and leaves changes staged. Generation uses the existing filename-based fallback when the AI CLI fails.
+
+On macOS, forward the chord through Ghostty: `keybind = alt+c=esc:c`. `Cmd+C` remains the terminal copy shortcut.
+
+`Option+S` replaces `Shift+S` for Sync Changes (`pull --rebase`, then `push`) with the focus in the Source Control list. Ghostty forwards it with `keybind = alt+s=esc:s`. Plain `s` still opens settings; Shift+S types `S` in the message field.

@@ -939,6 +939,7 @@ pub struct App {
     flash: Option<(String, bool)>,
     /// Pending ✧ commit-message generation, polled from tick().
     suggesting: Option<Receiver<String>>,
+    quick_committing: Option<(PathBuf, Receiver<Result<String, String>>)>,
     /// Pending Sync Changes run, polled from tick().
     syncing: Option<(usize, Receiver<Result<String, String>>)>,
     overlay: Option<Overlay>,
@@ -1076,6 +1077,7 @@ impl App {
             history_target,
             flash: None,
             suggesting: None,
+            quick_committing: None,
             syncing: None,
             overlay: None,
             hovered: None,
@@ -1307,6 +1309,30 @@ impl App {
             self.sidebar_state.sidebar_width = shared.sidebar_width;
             if let Some(ctl) = &self.pane_ctl {
                 ctl.resize_preferred(self.last_width, shared.sidebar_width, shared.dock_right);
+            }
+        }
+        if let Some((root, rx)) = &self.quick_committing {
+            let outcome = match rx.try_recv() {
+                Ok(result) => Some(result),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Some(Err("Quick commit worker stopped.".into()))
+                }
+            };
+            if let Some(result) = outcome {
+                if result.is_ok()
+                    && let Some(repo) = self.repos.iter_mut().find(|repo| repo.git.root() == root)
+                {
+                    repo.message.clear();
+                    repo.cursor = 0;
+                }
+                self.flash = Some(match result {
+                    Ok(summary) => (summary, false),
+                    Err(error) => (error, true),
+                });
+                self.quick_committing = None;
+                self.refresh();
+                self.persist_scm();
             }
         }
         if let Some(rx) = &self.suggesting {
@@ -1589,6 +1615,16 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        if self.quick_committing.is_some() {
+            self.flash = Some(("Stage + AI commit is running…".into(), false));
+            return None;
+        }
+        if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::ALT {
+            if self.overlay.is_none() {
+                self.quick_commit();
+            }
+            return None;
+        }
         if key.code == KeyCode::Char('q')
             && key.modifiers.contains(KeyModifiers::CONTROL)
             && !key.modifiers.contains(KeyModifiers::ALT)
@@ -1736,8 +1772,8 @@ impl App {
             KeyCode::Char('r') => self.refresh(),
             KeyCode::Char('i') => self.set_theme(self.theme.toggled()),
             KeyCode::Char('A') => self.suggest_message(),
+            KeyCode::Char('s') if key.modifiers == KeyModifiers::ALT => self.sync_changes(),
             KeyCode::Char('s') => self.open_settings(),
-            KeyCode::Char('S') => self.sync_changes(),
             KeyCode::Char('o') => self.open_selected_diff(),
             KeyCode::Char('m') => self.open_menu_for_selection(),
             KeyCode::Char('b') => self.hide(),
@@ -1751,6 +1787,9 @@ impl App {
 
     /// `Some(exit)` ends the event loop, mirroring on_key.
     pub fn on_mouse(&mut self, mouse: MouseEvent) -> Option<Exit> {
+        if self.quick_committing.is_some() {
+            return None;
+        }
         // Any mouse activity = "the mouse is over this pane": it shows the
         // hover title-bar buttons until the linger expires.
         self.last_mouse = Some(std::time::Instant::now());
@@ -3774,6 +3813,32 @@ impl App {
         self.refresh();
     }
 
+    pub fn quick_commit(&mut self) {
+        if self.quick_committing.is_some() || self.suggesting.is_some() || self.syncing.is_some() {
+            self.flash = Some(("Wait for the current Git operation to finish.".into(), true));
+            return;
+        }
+        let Some(repo) = self.active_repo() else {
+            return;
+        };
+        let git = repo.git.clone();
+        let root = git.root().to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = git.stage_generate_commit(|diff, files| {
+                suggest::spawn(diff, files)
+                    .recv()
+                    .map_err(|_| "Commit message generation failed.".into())
+            });
+            let _ = tx.send(result);
+        });
+        self.quick_committing = Some((root, rx));
+        self.flash = Some((
+            "Staging all changes and generating commit message…".into(),
+            false,
+        ));
+    }
+
     /// Kick off ✧ commit-message generation in the background.
     fn suggest_message(&mut self) {
         if self.suggesting.is_some() {
@@ -4750,7 +4815,7 @@ impl App {
             ("o", "diff"),
             ("m", "menu"),
             ("b", "hide"),
-            ("S", "sync"),
+            ("Alt+S", "sync"),
             ("s", "settings"),
             ("r", "refresh"),
             ("q", "quit"),

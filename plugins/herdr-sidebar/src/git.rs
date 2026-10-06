@@ -155,6 +155,33 @@ impl Git {
         run_in(&self.root, &["add", "-A"]).map(drop)
     }
 
+    /// Stage all, generate a message, and commit the same index/branch snapshot.
+    /// The caller runs this on a worker; failed generation leaves changes staged.
+    pub fn stage_generate_commit(
+        &self,
+        generate: impl FnOnce(String, Vec<String>) -> Result<String, String>,
+    ) -> Result<String, String> {
+        self.stage_all()?;
+        if self.status()?.staged.is_empty() {
+            return Err("No changes to commit.".into());
+        }
+        let tree = run_in(&self.root, &["write-tree"])?;
+        let branch = self.status()?.branch;
+        let head = run_in(&self.root, &["rev-parse", "--verify", "HEAD"]).ok();
+        let (diff, files) = self.diff_for_message()?;
+        let message = generate(diff, files)?;
+        if message.trim().is_empty() {
+            return Err("Generated commit message is empty.".into());
+        }
+        if run_in(&self.root, &["write-tree"])? != tree
+            || self.status()?.branch != branch
+            || run_in(&self.root, &["rev-parse", "--verify", "HEAD"]).ok() != head
+        {
+            return Err("Repository changed during message generation; retry the commit.".into());
+        }
+        self.commit(message.trim())
+    }
+
     /// Whether HEAD resolves to a real commit — false only on an unborn
     /// branch (a repo with no commits yet), where `git reset` has nothing to
     /// reset against.
@@ -1651,6 +1678,76 @@ mod tests {
             ["src/app.rs", "vendor/other.rs"],
             "the nested root itself and everything inside it"
         );
+    }
+
+    fn quick_commit_fixture(tag: &str) -> Git {
+        let root = std::env::temp_dir().join(format!("sidebar-quick-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        run_in(&root, &["init", "-q"]).unwrap();
+        run_in(&root, &["config", "user.name", "Test"]).unwrap();
+        run_in(&root, &["config", "user.email", "test@example.invalid"]).unwrap();
+        Git { root }
+    }
+
+    #[test]
+    fn quick_commit_stages_everything_and_uses_generated_message() {
+        let git = quick_commit_fixture("success");
+        std::fs::write(git.root.join("first.txt"), "one").unwrap();
+        std::fs::write(git.root.join("second.txt"), "two").unwrap();
+        let result = git.stage_generate_commit(|diff, files| {
+            assert!(diff.contains("one"));
+            assert_eq!(files, vec!["first.txt", "second.txt"]);
+            Ok("Add both files".into())
+        });
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            run_in(&git.root, &["log", "-1", "--format=%s"])
+                .unwrap()
+                .trim(),
+            "Add both files"
+        );
+        assert!(git.status().unwrap().staged.is_empty());
+        assert!(git.status().unwrap().unstaged.is_empty());
+        std::fs::remove_dir_all(git.root).unwrap();
+    }
+
+    #[test]
+    fn quick_commit_stops_on_generation_failure_or_empty_message() {
+        for (tag, response) in [
+            ("failed", Err("generation failed".into())),
+            ("empty", Ok(" ".into())),
+        ] {
+            let git = quick_commit_fixture(tag);
+            std::fs::write(git.root.join("first.txt"), "one").unwrap();
+            assert!(git.stage_generate_commit(|_, _| response).is_err());
+            assert!(!git.has_head());
+            assert_eq!(git.status().unwrap().staged.len(), 1);
+            std::fs::remove_dir_all(git.root).unwrap();
+        }
+    }
+
+    #[test]
+    fn quick_commit_aborts_when_index_changes_while_generating() {
+        let git = quick_commit_fixture("changed");
+        std::fs::write(git.root.join("first.txt"), "one").unwrap();
+        let result = git.stage_generate_commit(|_, _| {
+            std::fs::write(git.root.join("second.txt"), "two").unwrap();
+            git.stage_all().unwrap();
+            Ok("Add first file".into())
+        });
+        assert!(result.unwrap_err().contains("Repository changed"));
+        assert!(!git.has_head());
+        std::fs::remove_dir_all(git.root).unwrap();
+    }
+
+    #[test]
+    fn quick_commit_clean_repo_does_not_generate_or_commit() {
+        let git = quick_commit_fixture("clean");
+        let result = git.stage_generate_commit(|_, _| panic!("must not generate"));
+        assert_eq!(result.unwrap_err(), "No changes to commit.");
+        assert!(!git.has_head());
+        std::fs::remove_dir_all(git.root).unwrap();
     }
 
     /// A repo with an inner repo under `vendor/lib`, both dirty.
