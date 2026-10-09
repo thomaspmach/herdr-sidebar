@@ -12,7 +12,7 @@ tabs — ephemeral until you double-click to pin one.
 <img alt="Rust" src="https://img.shields.io/badge/Rust-self--contained_crate-orange?logo=rust&logoColor=white">
 <img alt="herdr" src="https://img.shields.io/badge/herdr-%E2%89%A5%200.8-5865a3">
 <img alt="Platforms" src="https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-supported-2ea44f">
-<img alt="CI" src="https://github.com/alexarthurs/herdr-sidebar/actions/workflows/ci.yml/badge.svg">
+<img alt="CI" src="https://github.com/thomaspmach/herdr-sidebar/actions/workflows/ci.yml/badge.svg">
 <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
 
 <br><br>
@@ -25,7 +25,7 @@ If you've ever alt-tabbed out of your terminal just to *look* at the tree, the d
 what's staged, this closes that loop.
 
 ```sh
-herdr plugin install alexarthurs/herdr-sidebar/plugins/herdr-sidebar
+herdr plugin install thomaspmach/herdr-sidebar/plugins/herdr-sidebar
 ```
 
 Tagged releases use SHA-256-verified binaries on supported platforms and fall back to a
@@ -67,13 +67,15 @@ working panes back manually. Third-party TUIs are not yet verified with takeover
 </div>
 
 - Stage, unstage, discard, commit, inspect diffs, and sync with the upstream.
+- Source Control refreshes external file and staging changes every 1.5 seconds, including
+  while focus stays in a neighbouring terminal; commit-message drafts are preserved.
 - Click the branch name—in the panel header, a repository row, or the Git footer—to
   switch branches, create one with **New branch…**, or track a remote branch.
   Deleting an unmerged branch requires a separate force-delete confirmation.
 - Toggle changed files between list and folder tree with `t`, the view button, or Settings.
   In tree view, use `←→` to fold folders and `m` to stage or unstage a folder.
 - Use one commit box per repository in multi-repo folders.
-- Draft a commit message with the ✧ button through the local `claude` CLI, with a
+- Draft a commit message with the ✧ button through the local `claude` or `codex` CLI, with a
   filename-based fallback when Claude is unavailable.
 - Browse commits, file history, branches, worktrees, remotes, stashes, and tags.
 - Keep branch and sync controls visible in every sidebar view with the compact Git footer;
@@ -136,7 +138,7 @@ command = "herdr plugin action invoke quick-open --plugin herdr-sidebar"
 A Nerd Font is recommended for material icons; the emoji theme works everywhere.
 
 ```sh
-herdr plugin install alexarthurs/herdr-sidebar/plugins/herdr-sidebar
+herdr plugin install thomaspmach/herdr-sidebar/plugins/herdr-sidebar
 ```
 
 Local checkout:
@@ -168,8 +170,59 @@ Use the `-windows` suffix for each direct action on Windows.
 
 All docking, metadata, pane creation, and preview control use herdr's socket API directly.
 The plugin is one Rust crate; optional external tools only enhance Markdown (`glow`), video
-posters (`ffmpeg`), and AI commit drafts (`claude`).
+posters (`ffmpeg`), and AI commit drafts (`claude` or `codex`).
 
 <div align="center">
 <sub>Screenshots: herdr on Windows Terminal with a Nerd Font.</sub>
 </div>
+
+## Commit AI configuration
+
+Commit drafts default to Claude CLI with the `haiku` model. To use Codex, create
+`commit-ai.json` in `HERDR_PLUGIN_STATE_DIR` (normally
+`~/.local/state/herdr/plugins/herdr-sidebar` on macOS/Linux, or
+`%LOCALAPPDATA%\herdr\plugins\herdr-sidebar` on Windows):
+
+```json
+{
+  "cli": "codex",
+  "model": "gpt-6-luna",
+  "reasoning_effort": "medium"
+}
+```
+
+The file is read for every suggestion, so changing it needs no restart. Supported CLI
+values are `claude` and `codex`; omitting the file preserves Claude/Haiku. Codex defaults
+to `gpt-6-luna` and `medium` when the optional model/effort fields are absent. The chosen
+CLI must be installed on PATH and authenticated. Codex runs ephemeral, read-only, without
+user configuration or project instructions; shell tools are disabled. It receives only
+the pending diff (capped at 16 KiB) as task input. Only a completed agent message from a
+successful Codex turn becomes a draft. No commit is made by the AI subprocess.
+
+Missing CLI, authentication/model failures, malformed configuration, or a 60-second timeout
+use the existing filename-based fallback. Diagnostic stderr excludes diff/message content.
+
+### Maintaining a local fork
+
+Build and register from `plugins/herdr-sidebar` with `cargo build --release` and
+`herdr plugin link . --enabled`. Use the `refresh-sidebars` action to reload running
+sidebars while preserving preview/editor panes and saving commit drafts.
+Local links do not offer the official automatic update action. This fork builds from source
+with Rust: its manifest does not download original release binaries that lack the modification.
+
+Keep your change on a branch, with `upstream` pointing to the original repository.
+To bring in updates, run `git fetch upstream`, then `git merge upstream/main` on your
+branch, resolve any conflicts, run `cargo test` and `cargo clippy -- -D warnings`, rebuild,
+and refresh. These commands update your fork; installing the official plugin replaces
+the local registration. To revert to the original registered version, link its original
+plugin directory and refresh again.
+
+### Local fork: quick AI commit
+
+With the Sidebar focused, `Option+C` stages all changes in the selected repository, generates a message using the configured commit AI, and commits without pushing. In Explorer it switches to Source Control first. It ignores the shortcut while a dialog is open and prevents overlapping Git actions while running. If the index, branch, or HEAD changes during generation, it stops and leaves changes staged. Generation uses the existing filename-based fallback when the AI CLI fails.
+
+On macOS, forward the chord through Ghostty: `keybind = alt+c=esc:c`. `Cmd+C` remains the terminal copy shortcut.
+
+`Option+S` replaces `Shift+S` for Sync Changes (`pull --rebase`, then `push`) with the focus in the Source Control list. Ghostty forwards it with `keybind = alt+s=esc:s`. Plain `s` still opens settings; Shift+S types `S` in the message field.
+
+`Option+A` combines the quick AI commit and Sync Changes: stage all → generate message → commit → pull --rebase --autostash → push, on the same worker and repository. It stops at the first failure; if sync fails, the completed local commit remains available to retry with Option+S. Explorer switches to SCM first. Ghostty must forward it with `keybind = alt+a=esc:a`.

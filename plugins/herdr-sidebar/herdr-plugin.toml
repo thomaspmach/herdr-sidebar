@@ -18,18 +18,18 @@
 
 id = "herdr-sidebar"
 name = "herdr-sidebar"
-version = "0.15.0"
+version = "0.16.0"
 description = "VS Code-style sidebar: file explorer + source control (with ✧ AI commit messages) in one herdr pane."
 min_herdr_version = "0.8.0"
 platforms = ["linux", "macos", "windows"]
 
 [[build]]
 platforms = ["linux", "macos"]
-command = ["/bin/sh", "scripts/fetch-or-build.sh"]
+command = ["cargo", "build", "--release"]
 
 [[build]]
 platforms = ["windows"]
-command = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/fetch-or-build.ps1"]
+command = ["cargo", "build", "--release"]
 
 # Declarative pane entry — usable on linux/macos (`plugin pane open`) and as
 # the unix launcher's fallback. No Windows [[panes]] entry: the relative

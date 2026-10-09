@@ -260,6 +260,7 @@ fn main() -> std::io::Result<()> {
             .then_some(false)
     };
     let mut quick_open_on_open = initial_activity == Some(ensure::Target::QuickOpen);
+    let mut quick_commit_on_open = None;
     let result = loop {
         let exit = match view {
             View::Explorer => run_explorer(
@@ -277,6 +278,7 @@ fn main() -> std::io::Result<()> {
                 &root_key,
                 &workspace_label,
                 &spawn_cwd,
+                std::mem::take(&mut quick_commit_on_open),
             ),
         };
         match exit {
@@ -287,6 +289,14 @@ fn main() -> std::io::Result<()> {
             Ok(Exit::Search { focus_query }) => {
                 view = View::Explorer;
                 search_on_open = Some(focus_query);
+            }
+            Ok(Exit::QuickCommit) => {
+                view = View::SourceControl;
+                quick_commit_on_open = Some(false);
+            }
+            Ok(Exit::QuickCommitSync) => {
+                view = View::SourceControl;
+                quick_commit_on_open = Some(true);
             }
             Ok(Exit::QuickOpen) => {
                 view = View::Explorer;
@@ -422,10 +432,14 @@ fn run_scm(
     root_key: &str,
     legacy_workspace_label: &str,
     spawn_cwd: &std::path::Path,
+    quick_commit_on_open: Option<bool>,
 ) -> std::io::Result<Exit> {
     let cwd = resolve_root(root_key, legacy_workspace_label, spawn_cwd)?;
     let mut remembered_root = cwd.clone();
     let mut app = scm_app::App::new(cwd, cwd_follower);
+    if let Some(sync) = quick_commit_on_open {
+        app.quick_commit_with_sync(sync);
+    }
     let mut last_tick = std::time::Instant::now();
     loop {
         terminal.draw(|frame| app.draw(frame))?;

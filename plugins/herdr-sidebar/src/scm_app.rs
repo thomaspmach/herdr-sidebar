@@ -939,6 +939,7 @@ pub struct App {
     flash: Option<(String, bool)>,
     /// Pending ✧ commit-message generation, polled from tick().
     suggesting: Option<Receiver<String>>,
+    quick_committing: Option<(PathBuf, Receiver<Result<String, String>>)>,
     /// Pending Sync Changes run, polled from tick().
     syncing: Option<(usize, Receiver<Result<String, String>>)>,
     overlay: Option<Overlay>,
@@ -1076,6 +1077,7 @@ impl App {
             history_target,
             flash: None,
             suggesting: None,
+            quick_committing: None,
             syncing: None,
             overlay: None,
             hovered: None,
@@ -1256,15 +1258,6 @@ impl App {
         false
     }
 
-    fn pane_is_focused(&self) -> bool {
-        let Some(pane_id) = self.pane_ctl.as_ref().map(|ctl| ctl.pane_id.as_str()) else {
-            return true;
-        };
-        herdr_sidebar::ipc::call_text("pane.list", serde_json::json!({}))
-            .ok()
-            .is_some_and(|json| pane_focused_in(&json, pane_id))
-    }
-
     fn follow_sibling_cwd(&mut self) {
         if !self.sidebar_state.follow_cwd
             || self.overlay.is_some()
@@ -1318,6 +1311,30 @@ impl App {
                 ctl.resize_preferred(self.last_width, shared.sidebar_width, shared.dock_right);
             }
         }
+        if let Some((root, rx)) = &self.quick_committing {
+            let outcome = match rx.try_recv() {
+                Ok(result) => Some(result),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Some(Err("Quick commit worker stopped.".into()))
+                }
+            };
+            if let Some(result) = outcome {
+                if result.is_ok()
+                    && let Some(repo) = self.repos.iter_mut().find(|repo| repo.git.root() == root)
+                {
+                    repo.message.clear();
+                    repo.cursor = 0;
+                }
+                self.flash = Some(match result {
+                    Ok(summary) => (summary, false),
+                    Err(error) => (error, true),
+                });
+                self.quick_committing = None;
+                self.refresh();
+                self.persist_scm();
+            }
+        }
         if let Some(rx) = &self.suggesting {
             match rx.try_recv() {
                 Ok(message) => {
@@ -1351,9 +1368,6 @@ impl App {
                     self.syncing = None;
                 }
             }
-        }
-        if !self.pane_is_focused() {
-            return;
         }
         if self.repos.is_empty() {
             self.repos = Git::discover_all(&self.cwd)
@@ -1601,6 +1615,16 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        if self.quick_committing.is_some() {
+            self.flash = Some(("Stage + AI commit is running…".into(), false));
+            return None;
+        }
+        if matches!(key.code, KeyCode::Char('c' | 'a')) && key.modifiers == KeyModifiers::ALT {
+            if self.overlay.is_none() {
+                self.quick_commit_with_sync(key.code == KeyCode::Char('a'));
+            }
+            return None;
+        }
         if key.code == KeyCode::Char('q')
             && key.modifiers.contains(KeyModifiers::CONTROL)
             && !key.modifiers.contains(KeyModifiers::ALT)
@@ -1748,8 +1772,8 @@ impl App {
             KeyCode::Char('r') => self.refresh(),
             KeyCode::Char('i') => self.set_theme(self.theme.toggled()),
             KeyCode::Char('A') => self.suggest_message(),
+            KeyCode::Char('s') if key.modifiers == KeyModifiers::ALT => self.sync_changes(),
             KeyCode::Char('s') => self.open_settings(),
-            KeyCode::Char('S') => self.sync_changes(),
             KeyCode::Char('o') => self.open_selected_diff(),
             KeyCode::Char('m') => self.open_menu_for_selection(),
             KeyCode::Char('b') => self.hide(),
@@ -1763,6 +1787,9 @@ impl App {
 
     /// `Some(exit)` ends the event loop, mirroring on_key.
     pub fn on_mouse(&mut self, mouse: MouseEvent) -> Option<Exit> {
+        if self.quick_committing.is_some() {
+            return None;
+        }
         // Any mouse activity = "the mouse is over this pane": it shows the
         // hover title-bar buttons until the linger expires.
         self.last_mouse = Some(std::time::Instant::now());
@@ -3786,6 +3813,37 @@ impl App {
         self.refresh();
     }
 
+    pub fn quick_commit_with_sync(&mut self, sync: bool) {
+        if self.quick_committing.is_some() || self.suggesting.is_some() || self.syncing.is_some() {
+            self.flash = Some(("Wait for the current Git operation to finish.".into(), true));
+            return;
+        }
+        let Some(repo) = self.active_repo() else {
+            return;
+        };
+        let git = repo.git.clone();
+        let root = git.root().to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let generate = |diff, files| {
+                suggest::spawn(diff, files)
+                    .recv()
+                    .map_err(|_| "Commit message generation failed.".into())
+            };
+            let result = if sync {
+                git.stage_generate_commit_sync(generate)
+            } else {
+                git.stage_generate_commit(generate)
+            };
+            let _ = tx.send(result);
+        });
+        self.quick_committing = Some((root, rx));
+        self.flash = Some((
+            "Staging all changes and generating commit message…".into(),
+            false,
+        ));
+    }
+
     /// Kick off ✧ commit-message generation in the background.
     fn suggest_message(&mut self) {
         if self.suggesting.is_some() {
@@ -4762,7 +4820,7 @@ impl App {
             ("o", "diff"),
             ("m", "menu"),
             ("b", "hide"),
-            ("S", "sync"),
+            ("Alt+S", "sync"),
             ("s", "settings"),
             ("r", "refresh"),
             ("q", "quit"),
@@ -5445,26 +5503,6 @@ fn tree_dir_item(
     ListItem::new(Line::from(spans))
 }
 
-fn pane_focused_in(pane_list_json: &str, pane_id: &str) -> bool {
-    let Ok(value) =
-        serde_json::from_str::<serde_json::Value>(pane_list_json.trim_start_matches('\u{feff}'))
-    else {
-        return false;
-    };
-    value
-        .get("result")
-        .and_then(|result| result.get("panes"))
-        .and_then(|panes| panes.as_array())
-        .and_then(|panes| {
-            panes
-                .iter()
-                .find(|pane| pane.get("pane_id").and_then(|id| id.as_str()) == Some(pane_id))
-        })
-        .and_then(|pane| pane.get("focused"))
-        .and_then(|focused| focused.as_bool())
-        .unwrap_or(false)
-}
-
 fn no_repo_layout(area: Rect, merged: bool) -> [Rect; 2] {
     Layout::vertical([
         Constraint::Length(if merged { 3 } else { 0 }),
@@ -5476,6 +5514,56 @@ fn no_repo_layout(area: Rect, merged: bool) -> [Rect; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unfocused_tick_picks_up_external_changes_and_preserves_commit_draft() {
+        struct TestRepo(PathBuf);
+        impl Drop for TestRepo {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TestRepo(std::env::temp_dir().join(format!(
+            "herdr-unfocused-refresh-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        )));
+        std::fs::create_dir_all(&root.0).unwrap();
+        let git = |args: &[&str]| {
+            let result = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&root.0)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        let follower = std::rc::Rc::new(std::cell::RefCell::new(
+            herdr_sidebar::launch::CwdFollower::default(),
+        ));
+        let mut app = App::new(root.0.clone(), follower);
+        // A nonexistent pane cannot be focused, including when a live Herdr is available.
+        app.pane_ctl = Some(PaneCtl {
+            pane_id: "test:unfocused-sidebar".into(),
+        });
+        let draft: Vec<char> = "Keep my draft".chars().collect();
+        app.repos[0].message = draft.clone();
+        app.repos[0].cursor = 4;
+        std::fs::write(root.0.join("changed.txt"), "external edit").unwrap();
+        app.tick();
+        assert_eq!(app.repos[0].status.unstaged.len(), 1);
+        assert_eq!(app.repos[0].status.unstaged[0].path, "changed.txt");
+        git(&["add", "changed.txt"]);
+        app.tick();
+        assert!(app.repos[0].status.unstaged.is_empty());
+        assert_eq!(app.repos[0].status.staged.len(), 1);
+        assert_eq!(app.repos[0].message, draft);
+        assert_eq!(app.repos[0].cursor, 4);
+    }
 
     #[test]
     fn clean_diverged_repo_uses_sync_as_the_primary_action() {
@@ -5622,16 +5710,6 @@ mod tests {
         let draft = ['d', 'r', 'a', 'f', 't'];
         assert!(!commit_draft_present([empty, empty]));
         assert!(commit_draft_present([empty, draft.as_slice()]));
-    }
-
-    #[test]
-    fn focused_pane_detection_is_scoped_to_our_pane_id() {
-        let panes = r#"{"result":{"panes":[
-            {"pane_id":"w1:p1","focused":false},
-            {"pane_id":"w1:p2","focused":true}
-        ]}}"#;
-        assert!(!pane_focused_in(panes, "w1:p1"));
-        assert!(pane_focused_in(panes, "w1:p2"));
     }
 
     #[test]

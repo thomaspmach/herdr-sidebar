@@ -746,7 +746,7 @@ HACKING.md — budget time for that before promising a patched build.
   bordered list row) and ✓ Commit button, and the repo header row shows `⎇branch*` (star =
   dirty) plus clickable ⟳ sync / ✓ commit icons in the fixed last-6 columns. List rows now
   have VARIABLE HEIGHT — mouse hit-testing walks `Row::height()`, and j/k skip the widget
-  rows (`Row::selectable()`). The ✧ suggest / S sync keys act on the ACTIVE repo — the one
+  rows (`Row::selectable()`). The ✧ suggest / Option+S sync keys act on the ACTIVE repo — the one
   the selection is in (named in the panel header).
 - **Git drawers** (title-case names, incl. Worktrees): drawer lines carry parsed
   refs (`DrawerRef` — commit hash / stash index / branch / remote / tag / worktree path,
@@ -766,9 +766,10 @@ HACKING.md — budget time for that before promising a patched build.
   Local choices use a normal checkout; a remote choice creates its local tracking branch.
   Symbolic `<remote>/HEAD` aliases are omitted. Dirty-worktree checkout failures surface intact
   and never force, stash, discard, or otherwise mutate work to make the switch succeed.
-- Periodic Source Control status/drawer refresh backs off while its pane is unfocused, just
-  like Explorer decorations. Suggestion/sync worker results are still collected first so a
-  hidden pane never strands completed background work.
+- Source Control status/drawer refresh runs every 1.5 seconds even while its pane is
+  unfocused, so external edits and staging changes appear while working in a terminal.
+  Refresh preserves commit drafts and cursor positions. Explorer decorations retain their
+  existing focus-based backoff. Suggestion/sync worker results are collected before refresh.
 - Hotkey hints render as keycap chips (`wrap_hints` takes `(key, label)` pairs, shared in
   `ui.rs`). They live in the ⚙ Settings modal; the FOOTER copy is opt-in via the
   "Footer hotkeys" setting (persisted as `hotkeys` in the state file, default hidden —
@@ -1348,3 +1349,24 @@ First clean install of both plugins on a Mac (driven over SSH), findings:
 shell tab, git tab with lazygit). The Coordinator session delegates feature work to sibling
 panes. Create feature worktrees only when explicitly requested; the old repository-local
 feature-worktree skill has been retired.
+
+## Configurable commit AI
+
+`src/suggest.rs` reads `commit-ai.json` from `state::state_dir()` on each suggestion.
+This is the durable plugin **state** directory, distinct from `herdr plugin config-dir`.
+Claude/Haiku remains the default; Codex uses isolated ephemeral read-only execution and
+parses JSONL `item.completed` agent messages only after `turn.completed`. Drain stdout
+concurrently because event streams can exceed pipe capacity. Use `refresh-sidebars`,
+not the legacy hard-closing redeploy script, to preserve unsaved commit drafts.
+
+### Local quick AI commit
+
+`Option+C` is handled only by the focused Sidebar TUI (Explorer switches to SCM). Ghostty must send `Esc+c` (`keybind = alt+c=esc:c`); Cmd+C remains unchanged. `Git::stage_generate_commit` runs on a worker and checks the index tree, branch, and HEAD before committing. SCM blocks further key/mouse Git actions until completion, and applies results by repository root rather than current selection. The existing suggestion fallback remains in use.
+
+`Option+S` replaces `Shift+S` for Sync Changes (`pull --rebase`, then `push`) with the focus in the Source Control list. Ghostty forwards it with `keybind = alt+s=esc:s`. Plain `s` still opens settings; Shift+S types `S` in the message field.
+
+`Option+A` combines the quick AI commit and Sync Changes: stage all → generate message → commit → pull --rebase --autostash → push, on the same worker and repository. It stops at the first failure; if sync fails, the completed local commit remains available to retry with Option+S. Explorer switches to SCM first. Ghostty must forward it with `keybind = alt+a=esc:a`.
+
+### Fork release distribution
+
+This fork publishes releases to `thomaspmach/herdr-sidebar`. The prebuilt installers, stable-release API check, managed-registration owner check, update install target, and README install commands must all use this fork. Keep the upstream project credits intact; local and other-owner registrations still do not self-update.
