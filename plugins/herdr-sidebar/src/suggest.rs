@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 const MAX_DIFF_BYTES: usize = 16 * 1024;
 
 /// How long to wait for an AI CLI before killing it and falling back.
-const TIMEOUT: Duration = Duration::from_secs(60);
+const TIMEOUT: Duration = Duration::from_secs(120);
 
 const PROMPT: &str = "Write a git commit message for the diff on stdin: one imperative \
                       subject line under 72 characters, no quotes, no trailing period. \

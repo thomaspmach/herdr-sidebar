@@ -204,7 +204,7 @@ user configuration or project instructions; shell tools are disabled. It receive
 the pending diff (capped at 16 KiB) as task input. Only a completed agent message from a
 successful Codex turn becomes a draft. No commit is made by the AI subprocess.
 
-Missing CLI, authentication/model failures, malformed configuration, or a 60-second timeout
+Missing CLI, authentication/model failures, malformed configuration, or a 120-second timeout
 use the existing filename-based fallback. Diagnostic stderr excludes diff/message content.
 
 ### Maintaining a local fork

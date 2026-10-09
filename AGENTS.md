@@ -1444,3 +1444,5 @@ Fork workflows also support manual dispatch: CI can validate a selected branch, 
 ### Upstream synchronization (v0.16.1)
 
 Merged upstream through `081ed13` (v0.15.1 plus CI compatibility fix). Preserve the fork AI shortcuts and release endpoints when syncing. SCM keeps background refresh enabled by default; `HERDR_SIDEBAR_BACKGROUND_REFRESH=0` can disable it, while `1` explicitly enables it. RootMemory now owns roots across view changes, including Explorer-to-SCM quick commits.
+
+Commit-message generation waits up to 120 seconds per AI CLI attempt before terminating it and using the existing filename fallback (Claude and Codex; fork v0.16.2).
