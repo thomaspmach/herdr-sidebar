@@ -1366,3 +1366,7 @@ not the legacy hard-closing redeploy script, to preserve unsaved commit drafts.
 `Option+S` replaces `Shift+S` for Sync Changes (`pull --rebase`, then `push`) with the focus in the Source Control list. Ghostty forwards it with `keybind = alt+s=esc:s`. Plain `s` still opens settings; Shift+S types `S` in the message field.
 
 `Option+A` combines the quick AI commit and Sync Changes: stage all → generate message → commit → pull --rebase --autostash → push, on the same worker and repository. It stops at the first failure; if sync fails, the completed local commit remains available to retry with Option+S. Explorer switches to SCM first. Ghostty must forward it with `keybind = alt+a=esc:a`.
+
+### Fork release distribution
+
+This fork publishes releases to `thomaspmach/herdr-sidebar`. The prebuilt installers, stable-release API check, managed-registration owner check, update install target, and README install commands must all use this fork. Keep the upstream project credits intact; local and other-owner registrations still do not self-update.
