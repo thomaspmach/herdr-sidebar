@@ -1370,3 +1370,5 @@ not the legacy hard-closing redeploy script, to preserve unsaved commit drafts.
 ### Fork release distribution
 
 This fork publishes releases to `thomaspmach/herdr-sidebar`. The prebuilt installers, stable-release API check, managed-registration owner check, update install target, and README install commands must all use this fork. Keep the upstream project credits intact; local and other-owner registrations still do not self-update.
+
+Fork workflows also support manual dispatch: CI can validate a selected branch, and Release binaries accepts an existing immutable version tag, checks out that tag, verifies its three versions, and publishes assets for that tag. Use this when tag/push events do not start runs in the fork.
