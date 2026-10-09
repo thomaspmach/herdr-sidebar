@@ -89,6 +89,7 @@ pub enum Exit {
     QuickOpen,
     /// Switch to Source Control and run stage + AI commit.
     QuickCommit,
+    QuickCommitSync,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

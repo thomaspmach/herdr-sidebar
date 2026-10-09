@@ -1030,9 +1030,13 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return None;
         }
-        if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::ALT {
+        if matches!(key.code, KeyCode::Char('c' | 'a')) && key.modifiers == KeyModifiers::ALT {
             if self.overlay.is_none() {
-                return Some(Exit::QuickCommit);
+                return Some(if key.code == KeyCode::Char('a') {
+                    Exit::QuickCommitSync
+                } else {
+                    Exit::QuickCommit
+                });
             }
             return None;
         }

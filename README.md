@@ -224,3 +224,5 @@ With the Sidebar focused, `Option+C` stages all changes in the selected reposito
 On macOS, forward the chord through Ghostty: `keybind = alt+c=esc:c`. `Cmd+C` remains the terminal copy shortcut.
 
 `Option+S` replaces `Shift+S` for Sync Changes (`pull --rebase`, then `push`) with the focus in the Source Control list. Ghostty forwards it with `keybind = alt+s=esc:s`. Plain `s` still opens settings; Shift+S types `S` in the message field.
+
+`Option+A` combines the quick AI commit and Sync Changes: stage all → generate message → commit → pull --rebase --autostash → push, on the same worker and repository. It stops at the first failure; if sync fails, the completed local commit remains available to retry with Option+S. Explorer switches to SCM first. Ghostty must forward it with `keybind = alt+a=esc:a`.

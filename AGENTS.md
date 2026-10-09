@@ -1364,3 +1364,5 @@ not the legacy hard-closing redeploy script, to preserve unsaved commit drafts.
 `Option+C` is handled only by the focused Sidebar TUI (Explorer switches to SCM). Ghostty must send `Esc+c` (`keybind = alt+c=esc:c`); Cmd+C remains unchanged. `Git::stage_generate_commit` runs on a worker and checks the index tree, branch, and HEAD before committing. SCM blocks further key/mouse Git actions until completion, and applies results by repository root rather than current selection. The existing suggestion fallback remains in use.
 
 `Option+S` replaces `Shift+S` for Sync Changes (`pull --rebase`, then `push`) with the focus in the Source Control list. Ghostty forwards it with `keybind = alt+s=esc:s`. Plain `s` still opens settings; Shift+S types `S` in the message field.
+
+`Option+A` combines the quick AI commit and Sync Changes: stage all → generate message → commit → pull --rebase --autostash → push, on the same worker and repository. It stops at the first failure; if sync fails, the completed local commit remains available to retry with Option+S. Explorer switches to SCM first. Ghostty must forward it with `keybind = alt+a=esc:a`.

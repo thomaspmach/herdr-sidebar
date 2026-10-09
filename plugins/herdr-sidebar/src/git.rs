@@ -182,6 +182,17 @@ impl Git {
         self.commit(message.trim())
     }
 
+    /// Commit first, then sync; failures never undo a completed local commit.
+    pub fn stage_generate_commit_sync(
+        &self,
+        generate: impl FnOnce(String, Vec<String>) -> Result<String, String>,
+    ) -> Result<String, String> {
+        let summary = self.stage_generate_commit(generate)?;
+        self.sync()
+            .map(|synced| format!("{summary}; {synced}"))
+            .map_err(|error| format!("Commit created; sync failed: {error}"))
+    }
+
     /// Whether HEAD resolves to a real commit — false only on an unborn
     /// branch (a repo with no commits yet), where `git reset` has nothing to
     /// reset against.
@@ -1739,6 +1750,57 @@ mod tests {
         assert!(result.unwrap_err().contains("Repository changed"));
         assert!(!git.has_head());
         std::fs::remove_dir_all(git.root).unwrap();
+    }
+
+    #[test]
+    fn quick_commit_sync_pushes_to_local_remote_and_preserves_commit_on_sync_failure() {
+        let git = quick_commit_fixture("sync");
+        let remote = git.root.with_extension("remote.git");
+        let _ = std::fs::remove_dir_all(&remote);
+        std::fs::create_dir_all(&remote).unwrap();
+        run_in(&remote, &["init", "--bare", "-q"]).unwrap();
+        std::fs::write(git.root.join("first.txt"), "one").unwrap();
+        git.stage_generate_commit(|_, _| Ok("Initial".into()))
+            .unwrap();
+        run_in(
+            &git.root,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        )
+        .unwrap();
+        run_in(&git.root, &["push", "-u", "origin", "HEAD"]).unwrap();
+        std::fs::write(git.root.join("first.txt"), "two").unwrap();
+        assert!(
+            git.stage_generate_commit_sync(|_, _| Ok("Update".into()))
+                .is_ok()
+        );
+        assert_eq!(
+            run_in(&git.root, &["rev-parse", "HEAD"]).unwrap(),
+            run_in(&remote, &["rev-parse", &git.status().unwrap().branch]).unwrap()
+        );
+        std::fs::write(git.root.join("first.txt"), "three").unwrap();
+        assert!(
+            git.stage_generate_commit_sync(|_, _| Err("generation failed".into()))
+                .is_err()
+        );
+        assert_eq!(
+            run_in(&git.root, &["log", "-1", "--format=%s"])
+                .unwrap()
+                .trim(),
+            "Update"
+        );
+        run_in(&git.root, &["remote", "remove", "origin"]).unwrap();
+        let error = git
+            .stage_generate_commit_sync(|_, _| Ok("Local only".into()))
+            .unwrap_err();
+        assert!(error.contains("Commit created; sync failed"));
+        assert_eq!(
+            run_in(&git.root, &["log", "-1", "--format=%s"])
+                .unwrap()
+                .trim(),
+            "Local only"
+        );
+        std::fs::remove_dir_all(git.root).unwrap();
+        std::fs::remove_dir_all(remote).unwrap();
     }
 
     #[test]

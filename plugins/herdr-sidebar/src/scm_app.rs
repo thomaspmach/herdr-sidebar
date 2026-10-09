@@ -1619,9 +1619,9 @@ impl App {
             self.flash = Some(("Stage + AI commit is running…".into(), false));
             return None;
         }
-        if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::ALT {
+        if matches!(key.code, KeyCode::Char('c' | 'a')) && key.modifiers == KeyModifiers::ALT {
             if self.overlay.is_none() {
-                self.quick_commit();
+                self.quick_commit_with_sync(key.code == KeyCode::Char('a'));
             }
             return None;
         }
@@ -3813,7 +3813,7 @@ impl App {
         self.refresh();
     }
 
-    pub fn quick_commit(&mut self) {
+    pub fn quick_commit_with_sync(&mut self, sync: bool) {
         if self.quick_committing.is_some() || self.suggesting.is_some() || self.syncing.is_some() {
             self.flash = Some(("Wait for the current Git operation to finish.".into(), true));
             return;
@@ -3825,11 +3825,16 @@ impl App {
         let root = git.root().to_path_buf();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let result = git.stage_generate_commit(|diff, files| {
+            let generate = |diff, files| {
                 suggest::spawn(diff, files)
                     .recv()
                     .map_err(|_| "Commit message generation failed.".into())
-            });
+            };
+            let result = if sync {
+                git.stage_generate_commit_sync(generate)
+            } else {
+                git.stage_generate_commit(generate)
+            };
             let _ = tx.send(result);
         });
         self.quick_committing = Some((root, rx));
