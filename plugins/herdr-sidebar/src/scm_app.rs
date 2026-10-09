@@ -984,6 +984,8 @@ pub struct App {
     persisted_draft_roots: std::collections::BTreeSet<String>,
     pending_unified_width: Option<(u16, std::time::Instant)>,
     pub tree_view: bool,
+    /// Keep polling Git status while unfocused ([`sidebar::BACKGROUND_REFRESH_ENV`]).
+    background_refresh: bool,
 }
 
 const MY_VIEW: View = View::SourceControl;
@@ -1101,6 +1103,10 @@ impl App {
             persisted_draft_roots,
             pending_unified_width: None,
             tree_view,
+            background_refresh: std::env::var(sidebar::BACKGROUND_REFRESH_ENV)
+                .ok()
+                .map(|value| sidebar::background_refresh_enabled(Some(&value)))
+                .unwrap_or(true),
         };
         app.apply_identity();
         app.refresh();
@@ -1164,6 +1170,9 @@ impl App {
     }
 
     fn close(&mut self, snooze: bool) {
+        // Closing our own pane kills this process: save a pending remembered
+        // root first (the outer loop's flush never runs on this path).
+        crate::flush_pending_root();
         // A direct pane close kills the process without a Drop/signal hook.
         // Persist drafts first; failure keeps the live pane open with the
         // existing error notice from persist_scm().
@@ -1256,6 +1265,15 @@ impl App {
             self.flash = Some(("Explorer stayed open; unified mode cancelled".into(), true));
         }
         false
+    }
+
+    fn pane_is_focused(&self) -> bool {
+        let Some(pane_id) = self.pane_ctl.as_ref().map(|ctl| ctl.pane_id.as_str()) else {
+            return true;
+        };
+        herdr_sidebar::ipc::call_text("pane.list", serde_json::json!({}))
+            .ok()
+            .is_some_and(|json| pane_focused_in(&json, pane_id))
     }
 
     fn follow_sibling_cwd(&mut self) {
@@ -1368,6 +1386,9 @@ impl App {
                     self.syncing = None;
                 }
             }
+        }
+        if !self.background_refresh && !self.pane_is_focused() {
+            return;
         }
         if self.repos.is_empty() {
             self.repos = Git::discover_all(&self.cwd)
@@ -5503,6 +5524,26 @@ fn tree_dir_item(
     ListItem::new(Line::from(spans))
 }
 
+fn pane_focused_in(pane_list_json: &str, pane_id: &str) -> bool {
+    let Ok(value) =
+        serde_json::from_str::<serde_json::Value>(pane_list_json.trim_start_matches('\u{feff}'))
+    else {
+        return false;
+    };
+    value
+        .get("result")
+        .and_then(|result| result.get("panes"))
+        .and_then(|panes| panes.as_array())
+        .and_then(|panes| {
+            panes
+                .iter()
+                .find(|pane| pane.get("pane_id").and_then(|id| id.as_str()) == Some(pane_id))
+        })
+        .and_then(|pane| pane.get("focused"))
+        .and_then(|focused| focused.as_bool())
+        .unwrap_or(false)
+}
+
 fn no_repo_layout(area: Rect, merged: bool) -> [Rect; 2] {
     Layout::vertical([
         Constraint::Length(if merged { 3 } else { 0 }),
@@ -5710,6 +5751,26 @@ mod tests {
         let draft = ['d', 'r', 'a', 'f', 't'];
         assert!(!commit_draft_present([empty, empty]));
         assert!(commit_draft_present([empty, draft.as_slice()]));
+    }
+
+    #[test]
+    fn focused_pane_detection_is_scoped_to_our_pane_id() {
+        let panes = r#"{"result":{"panes":[
+            {"pane_id":"w1:p1","focused":false},
+            {"pane_id":"w1:p2","focused":true}
+        ]}}"#;
+        assert!(!pane_focused_in(panes, "w1:p1"));
+        assert!(pane_focused_in(panes, "w1:p2"));
+    }
+
+    #[test]
+    fn background_refresh_is_opt_in() {
+        assert!(!sidebar::background_refresh_enabled(None));
+        assert!(!sidebar::background_refresh_enabled(Some("")));
+        assert!(!sidebar::background_refresh_enabled(Some("0")));
+        assert!(!sidebar::background_refresh_enabled(Some("true")));
+        assert!(sidebar::background_refresh_enabled(Some("1")));
+        assert!(sidebar::background_refresh_enabled(Some(" 1 ")));
     }
 
     #[test]
